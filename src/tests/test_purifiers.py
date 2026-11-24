@@ -92,7 +92,6 @@ class TestAirPurifiers(TestBase):
     base_methods = [
         ["turn_on"],
         ["turn_off"],
-        ["set_sleep_mode"],
         ["set_manual_mode"],
         ["set_fan_speed", {"speed": 3}],
     ]
@@ -175,6 +174,14 @@ class TestAirPurifiers(TestBase):
         other = self.get_device("air_purifiers", "LAP-B851S-WUS")
         self.mock_api.reset_mock()
         assert self.run_in_loop(other.set_fan_speed, 4) is False
+        self.mock_api.assert_not_called()
+
+    def test_sprout_weu_fan_modes(self):
+        """Expose the two fan modes offered by the VeSync app on WEU."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WEU")
+        assert set(device.modes) == {const.PurifierModes.MANUAL, const.PurifierModes.AUTO}
+        self.mock_api.reset_mock()
+        assert self.run_in_loop(device.set_sleep_mode) is False
         self.mock_api.assert_not_called()
 
     def test_sprout_filter_life_refresh(self):

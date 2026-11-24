@@ -1102,6 +1102,7 @@ purifier_modules: list[PurifierMap] = [
     replace(
         _SPROUT_PURIFIER,
         dev_types=['LAP-B851S-WEU'],
+        modes=[PurifierModes.MANUAL, PurifierModes.AUTO],
         fan_levels=list(range(1, 5)),
         setup_entry='LAP-B851S-WEU',
     ),
