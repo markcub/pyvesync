@@ -257,6 +257,34 @@ class TestAirPurifiers(TestBase):
         }
         assert device.state.nightlight_status == previous_state
 
+    @pytest.mark.parametrize(
+        ("settings", "brightness", "color_temp"),
+        [
+            ({"brightness": 30, "color_temp_kelvin": 2700}, 30, 2700),
+            ({"brightness": 30}, 30, 2000),
+            ({"color_temp_kelvin": 2700}, 18, 2700),
+        ],
+    )
+    def test_sprout_weu_nightlight_settings(self, settings, brightness, color_temp):
+        """Send new settings while retaining omitted values and polled state."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WUS")
+        device.device_type = "LAP-B851S-WEU"
+        device.state.nightlight_brightness = 18
+        device.state.nightlight_color_temp = 2000
+        self.mock_api.return_value = ({"code": 0, "result": {"code": 0}}, 200)
+
+        assert self.run_in_loop(device.set_nightlight_mode, "on", **settings)
+        payload = parse_args(self.mock_api)["json_object"]["payload"]
+        assert payload["method"] == "setLightStatus"
+        assert payload["data"] == {
+            "nightLightSwitch": 1,
+            "brightness": brightness,
+            "colorTemperature": color_temp,
+            "colorMode": "white",
+        }
+        assert device.state.nightlight_brightness == 18
+        assert device.state.nightlight_color_temp == 2000
+
     def test_sprout_weu_auto_preference_requires_room_size(self):
         """Avoid sending an arbitrary room size when it has yet to be reported."""
         device = self.get_device("air_purifiers", "LAP-B851S-WUS")

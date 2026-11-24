@@ -620,6 +620,9 @@ class HumidifierFeatures(Features):
     RGB_NIGHTLIGHT = 'rgb_nightlight'
 
 
+SPROUT_NIGHTLIGHT_MAX_BRIGHTNESS = 100
+
+
 class PurifierFeatures(Features):
     """VeSync air purifier features.
 

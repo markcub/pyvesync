@@ -9,6 +9,7 @@ from typing_extensions import deprecated
 
 from pyvesync.base_devices.purifier_base import VeSyncPurifier
 from pyvesync.const import (
+    SPROUT_NIGHTLIGHT_MAX_BRIGHTNESS,
     ConnectionStatus,
     DeviceStatus,
     NightlightModes,
@@ -870,18 +871,37 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
 
         return True
 
-    async def set_nightlight_mode(self, mode: str) -> bool:
-        """Set WEU nightlight power, leaving confirmation to the status poll."""
+    async def set_nightlight_mode(
+        self,
+        mode: str,
+        *,
+        brightness: int | None = None,
+        color_temp_kelvin: int | None = None,
+    ) -> bool:
+        """Set WEU nightlight power and optional brightness (%) and colour (K).
+
+        Omitted settings retain their last reported values. The return value
+        acknowledges the command; the status poll confirms the device state.
+        """
         mode = mode.lower()
         if self.device_type != 'LAP-B851S-WEU' or mode not in (
             NightlightModes.ON,
             NightlightModes.OFF,
         ):
+            if brightness is not None or color_temp_kelvin is not None:
+                return False
             return await super().set_nightlight_mode(mode)
 
-        brightness = self.state.nightlight_brightness
-        color_temp = self.state.nightlight_color_temp
-        if brightness is None or color_temp is None:
+        if brightness is None:
+            brightness = self.state.nightlight_brightness
+        if color_temp_kelvin is None:
+            color_temp_kelvin = self.state.nightlight_color_temp
+        if brightness is None or color_temp_kelvin is None:
+            return False
+        if (
+            not 0 <= brightness <= SPROUT_NIGHTLIGHT_MAX_BRIGHTNESS
+            or color_temp_kelvin <= 0
+        ):
             return False
 
         method = 'setLightStatus'
@@ -890,7 +910,7 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
             {
                 'nightLightSwitch': int(mode == NightlightModes.ON),
                 'brightness': brightness,
-                'colorTemperature': color_temp,
+                'colorTemperature': color_temp_kelvin,
                 'colorMode': 'white',
             },
         )
