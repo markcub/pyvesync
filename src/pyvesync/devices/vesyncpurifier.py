@@ -800,7 +800,9 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
             self.state.auto_preference_type = auto_pref.autoPreferenceType
             self.state.auto_room_size = auto_pref.roomSize
         self.state.humidity = details.humidity
-        self.state.temperature = int((details.temperature or 0) / 10)
+        self.state.temperature = (
+            details.temperature / 10 if details.temperature is not None else None
+        )
         self.state.pm1 = details.PM1
         self.state.pm10 = details.PM10
         self.state.pm25 = details.PM25

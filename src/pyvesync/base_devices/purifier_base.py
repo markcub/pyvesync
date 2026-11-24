@@ -56,7 +56,7 @@ class PurifierState(DeviceState):
         light_detection_status (str): Light detection status of the purifier.
         nightlight_status (str): Nightlight status of the purifier.
         fan_rotate_angle (int): Fan rotate angle of the purifier.
-        temperature (int): Temperature value of the purifier.
+        temperature (float): Temperature value of the purifier.
         humidity (int): Humidity value of the purifier.
         voc (int): VOC value of the purifier.
         co2 (int): CO2 value of the purifier.
@@ -117,7 +117,7 @@ class PurifierState(DeviceState):
         self.display_set_status: str | None = None
         self.display_forever: bool = False
         self.humidity: int | None = None
-        self.temperature: int | None = None
+        self.temperature: float | None = None
         # Attributes not supported by all purifiers
         self.pm25: int | None = None
         self.pm1: int | None = None

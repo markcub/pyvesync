@@ -184,6 +184,18 @@ class TestAirPurifiers(TestBase):
         assert self.run_in_loop(device.set_sleep_mode) is False
         self.mock_api.assert_not_called()
 
+    def test_sprout_temperature_refresh(self):
+        """Preserve tenths of a degree and keep a null reading unknown."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WEU")
+        details = call_json_purifiers.PURIFIER_DETAILS["LAP-B851S-WUS"]
+        for raw, expected in ((609, 60.9), (0, 0.0), (None, None)):
+            response = call_json_purifiers.build_bypass_v2_response(
+                inner_result={**details, "temperature": raw}
+            )
+            self.mock_api.return_value = (response, 200)
+            self.run_in_loop(device.update)
+            assert device.state.temperature == expected
+
     def test_sprout_filter_life_refresh(self):
         """Read the filter percentage and preserve it across incomplete polls."""
         setup_entry = "LAP-B851S-WUS"
