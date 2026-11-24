@@ -61,6 +61,7 @@ class PurifierState(DeviceState):
         voc (int): VOC value of the purifier.
         co2 (int): CO2 value of the purifier.
         nightlight_brightness (int): Nightlight brightness level of the purifier.
+        nightlight_color_temp (int): Nightlight colour temperature in kelvin.
 
     Note:
         Not all attributes are supported by all models.
@@ -86,6 +87,7 @@ class PurifierState(DeviceState):
         'light_detection_switch',
         'mode',
         'nightlight_brightness',
+        'nightlight_color_temp',
         'nightlight_status',
         'pm1',
         'pm10',
@@ -126,6 +128,7 @@ class PurifierState(DeviceState):
         self.light_detection_switch: str | None = None
         self.light_detection_status: str | None = None
         self.nightlight_brightness: int | None = None
+        self.nightlight_color_temp: int | None = None
         self.nightlight_status: str | None = None
         self.fan_rotate_angle: int | None = None
 

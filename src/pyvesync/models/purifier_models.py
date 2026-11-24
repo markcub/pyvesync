@@ -10,7 +10,7 @@ subclass when deserializing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from mashumaro.config import BaseConfig
 from mashumaro.types import Discriminator
@@ -95,8 +95,15 @@ class PurifierSproutResult(InnerPurifierBaseResult):
     VOC: int | None
     CO2: int | None
     errorCode: int
-    nightlight: PurifierNightlight | None = None
+    nightlight: PurifierNightlight | None = field(
+        default=None, metadata={'alias': 'nightLight'}
+    )
     autoPreference: V2AutoPreferences | None = None
+
+    class Config(BaseConfig):  # type: ignore[override]
+        """Accept both the wire key and the existing model field name."""
+
+        allow_deserialization_not_by_alias = True
 
 
 @dataclass

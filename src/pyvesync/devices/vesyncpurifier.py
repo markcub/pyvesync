@@ -809,6 +809,7 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
                 details.nightlight.nightLightSwitch
             )
             self.state.nightlight_brightness = details.nightlight.brightness
+            self.state.nightlight_color_temp = details.nightlight.colorTemperature
 
     async def get_details(self) -> None:
         """Build API V2 Purifier details dictionary."""
