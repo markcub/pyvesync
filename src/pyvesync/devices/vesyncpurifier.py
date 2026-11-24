@@ -871,6 +871,11 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
 
         return True
 
+    @property
+    def supports_tunable_nightlight(self) -> bool:
+        """Return whether the model supports power, brightness and Kelvin control."""
+        return self.device_type == 'LAP-B851S-WEU'
+
     async def set_nightlight_mode(
         self,
         mode: str,
@@ -884,7 +889,7 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
         acknowledges the command; the status poll confirms the device state.
         """
         mode = mode.lower()
-        if self.device_type != 'LAP-B851S-WEU' or mode not in (
+        if not self.supports_tunable_nightlight or mode not in (
             NightlightModes.ON,
             NightlightModes.OFF,
         ):
