@@ -804,6 +804,8 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
         self.state.pm25 = details.PM25
         self.state.voc = details.VOC
         self.state.co2 = details.CO2
+        if details.filterLifePercent is not None:
+            self.state.filter_life = details.filterLifePercent
         if details.nightlight is not None:
             self.state.nightlight_status = DeviceStatus.from_int(
                 details.nightlight.nightLightSwitch

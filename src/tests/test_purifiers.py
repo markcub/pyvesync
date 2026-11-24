@@ -157,6 +157,26 @@ class TestAirPurifiers(TestBase):
             method_call, all_kwargs, setup_entry, self.write_api, self.overwrite
         )
 
+    def test_sprout_filter_life_refresh(self):
+        """Read the filter percentage and preserve it across incomplete polls."""
+        setup_entry = "LAP-B851S-WUS"
+        device = self.get_device("air_purifiers", setup_entry)
+        device.device_type = "LAP-B851S-WEU"
+        details = call_json_purifiers.PURIFIER_DETAILS[setup_entry]
+        assert device.state.filter_life is None
+
+        for fields, expected in (
+            ({"filterLifePercent": 76}, 76),
+            ({}, 76),
+            ({"filterLifePercent": 0}, 0),
+        ):
+            response = call_json_purifiers.build_bypass_v2_response(
+                inner_result={**details, **fields}
+            )
+            self.mock_api.return_value = (response, 200)
+            self.run_in_loop(device.update)
+            assert device.state.filter_life == expected
+
     def test_sprout_nightlight_refresh(self):
         """Refresh power, brightness and colour temperature from each poll."""
         setup_entry = "LAP-B851S-WUS"

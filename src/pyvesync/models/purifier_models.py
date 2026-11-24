@@ -99,6 +99,7 @@ class PurifierSproutResult(InnerPurifierBaseResult):
         default=None, metadata={'alias': 'nightLight'}
     )
     autoPreference: V2AutoPreferences | None = None
+    filterLifePercent: int | None = None
 
     class Config(BaseConfig):  # type: ignore[override]
         """Accept both the wire key and the existing model field name."""
