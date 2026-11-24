@@ -157,6 +157,26 @@ class TestAirPurifiers(TestBase):
             method_call, all_kwargs, setup_entry, self.write_api, self.overwrite
         )
 
+    def test_sprout_weu_fourth_speed(self):
+        """Send the verified fourth manual speed only on the WEU model."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WEU")
+        assert device.fan_levels == [1, 2, 3, 4]
+        self.mock_api.return_value = ({"code": 0, "result": {"code": 0}}, 200)
+        assert self.run_in_loop(device.set_fan_speed, 4)
+
+        payload = parse_args(self.mock_api)["json_object"]["payload"]
+        assert payload["method"] == "setLevel"
+        assert payload["data"] == {
+            "levelIdx": 0,
+            "manualSpeedLevel": 4,
+            "levelType": "wind",
+        }
+
+        other = self.get_device("air_purifiers", "LAP-B851S-WUS")
+        self.mock_api.reset_mock()
+        assert self.run_in_loop(other.set_fan_speed, 4) is False
+        self.mock_api.assert_not_called()
+
     def test_sprout_filter_life_refresh(self):
         """Read the filter percentage and preserve it across incomplete polls."""
         setup_entry = "LAP-B851S-WUS"

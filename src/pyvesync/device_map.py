@@ -59,7 +59,7 @@ Note:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import chain
 from types import MappingProxyType, ModuleType
 from typing import Union
@@ -885,6 +885,37 @@ humidifier_modules = [
 objects for humidifier devices."""
 
 
+_SPROUT_PURIFIER = PurifierMap(
+    class_name='VeSyncAirSprout',
+    dev_types=[
+        'LAP-B851S-WUS',
+        'LAP-B851S-WNA',
+        'LAP-B851S-AEUR',
+        'LAP-B851S-AUS',
+        'LAP-BAY-MAX01S',
+    ],
+    modes=[
+        PurifierModes.SLEEP,
+        PurifierModes.MANUAL,
+        PurifierModes.AUTO,
+    ],
+    features=[
+        PurifierFeatures.AIR_QUALITY,
+        PurifierFeatures.NIGHTLIGHT,
+    ],
+    fan_levels=list(range(1, 4)),
+    device_alias='Sprout Air Purifier',
+    auto_preferences=[
+        PurifierAutoPreference.DEFAULT,
+        PurifierAutoPreference.EFFICIENT,
+        PurifierAutoPreference.QUIET,
+    ],
+    model_display='Sprout Air Series',
+    model_name='Sprout Air',
+    setup_entry='LAP-B851S-WUS',
+)
+
+
 purifier_modules: list[PurifierMap] = [
     PurifierMap(
         class_name='VeSyncAirBypass',
@@ -1067,35 +1098,12 @@ purifier_modules: list[PurifierMap] = [
         model_name='Everest Air',
         setup_entry='EL551S',
     ),
-    PurifierMap(
-        class_name='VeSyncAirSprout',
-        dev_types=[
-            'LAP-B851S-WEU',
-            'LAP-B851S-WNA',
-            'LAP-B851S-AEUR',
-            'LAP-B851S-AUS',
-            'LAP-B851S-WUS',
-            'LAP-BAY-MAX01S',
-        ],
-        modes=[
-            PurifierModes.SLEEP,
-            PurifierModes.MANUAL,
-            PurifierModes.AUTO,
-        ],
-        features=[
-            PurifierFeatures.AIR_QUALITY,
-            PurifierFeatures.NIGHTLIGHT,
-        ],
-        fan_levels=list(range(1, 4)),
-        device_alias='Sprout Air Purifier',
-        auto_preferences=[
-            PurifierAutoPreference.DEFAULT,
-            PurifierAutoPreference.EFFICIENT,
-            PurifierAutoPreference.QUIET,
-        ],
-        model_display='Sprout Air Series',
-        model_name='Sprout Air',
-        setup_entry='LAP-B851S-WUS',
+    _SPROUT_PURIFIER,
+    replace(
+        _SPROUT_PURIFIER,
+        dev_types=['LAP-B851S-WEU'],
+        fan_levels=list(range(1, 5)),
+        setup_entry='LAP-B851S-WEU',
     ),
 ]
 """List of ['PurifierMap'][pyvesync.device_map.PurifierMap] configuration
