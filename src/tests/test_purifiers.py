@@ -324,6 +324,20 @@ class TestAirPurifiers(TestBase):
         assert device.state.nightlight_brightness == 18
         assert device.state.nightlight_color_temp == 2000
 
+    @pytest.mark.parametrize("settings", [{}, {"brightness": 101, "color_temp_kelvin": 2000}])
+    def test_sprout_weu_invalid_nightlight_settings(self, settings):
+        """Report local validation failure without sending a device command."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WEU")
+        self.mock_api.return_value = ({"code": 0, "result": {"code": 0}}, 200)
+        assert self.run_in_loop(
+            device.set_nightlight_mode, "on", brightness=18, color_temp_kelvin=2000
+        )
+        self.mock_api.reset_mock()
+
+        assert self.run_in_loop(device.set_nightlight_mode, "on", **settings) is False
+        self.mock_api.assert_not_called()
+        assert device.last_response.name == "INVALID_NIGHTLIGHT_SETTINGS"
+
     def test_sprout_weu_auto_preference_requires_room_size(self):
         """Avoid sending an arbitrary room size when it has yet to be reported."""
         device = self.get_device("air_purifiers", "LAP-B851S-WUS")

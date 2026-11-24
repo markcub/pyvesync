@@ -896,6 +896,11 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
             NightlightModes.OFF,
         ):
             if brightness is not None or color_temp_kelvin is not None:
+                self.last_response = ResponseInfo(
+                    'UNSUPPORTED_NIGHTLIGHT_SETTINGS',
+                    ErrorTypes.BAD_RESPONSE,
+                    'This nightlight mode or model does not support tunable settings',
+                )
                 return False
             return await super().set_nightlight_mode(mode)
 
@@ -903,12 +908,17 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
             brightness = self.state.nightlight_brightness
         if color_temp_kelvin is None:
             color_temp_kelvin = self.state.nightlight_color_temp
-        if brightness is None or color_temp_kelvin is None:
-            return False
         if (
-            not 0 <= brightness <= SPROUT_NIGHTLIGHT_MAX_BRIGHTNESS
+            brightness is None
+            or color_temp_kelvin is None
+            or not 0 <= brightness <= SPROUT_NIGHTLIGHT_MAX_BRIGHTNESS
             or color_temp_kelvin <= 0
         ):
+            self.last_response = ResponseInfo(
+                'INVALID_NIGHTLIGHT_SETTINGS',
+                ErrorTypes.BAD_RESPONSE,
+                'Nightlight brightness or colour temperature is missing or invalid',
+            )
             return False
 
         method = 'setLightStatus'
