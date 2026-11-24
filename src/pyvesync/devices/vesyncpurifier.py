@@ -870,6 +870,32 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
 
         return True
 
+    async def set_nightlight_mode(self, mode: str) -> bool:
+        """Set WEU nightlight power, leaving confirmation to the status poll."""
+        mode = mode.lower()
+        if self.device_type != 'LAP-B851S-WEU' or mode not in (
+            NightlightModes.ON,
+            NightlightModes.OFF,
+        ):
+            return await super().set_nightlight_mode(mode)
+
+        brightness = self.state.nightlight_brightness
+        color_temp = self.state.nightlight_color_temp
+        if brightness is None or color_temp is None:
+            return False
+
+        method = 'setLightStatus'
+        response = await self.call_bypassv2_api(
+            method,
+            {
+                'nightLightSwitch': int(mode == NightlightModes.ON),
+                'brightness': brightness,
+                'colorTemperature': color_temp,
+                'colorMode': 'white',
+            },
+        )
+        return self._sprout_command_accepted(method, response)
+
     async def get_details(self) -> None:
         """Build API V2 Purifier details dictionary."""
         r_dict = await self.call_bypassv2_api('getPurifierStatus')

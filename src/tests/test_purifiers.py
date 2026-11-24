@@ -229,6 +229,34 @@ class TestAirPurifiers(TestBase):
         assert device.state.auto_preference_type == ("quiet" if accepted else "default")
         assert device.state.auto_room_size == 152
 
+    @pytest.mark.parametrize("code", [0, "-1"])
+    @pytest.mark.parametrize(
+        ("method", "switch", "previous_state"),
+        [
+            ("turn_on_nightlight", 1, const.DeviceStatus.OFF),
+            ("turn_off_nightlight", 0, const.DeviceStatus.ON),
+        ],
+    )
+    def test_sprout_weu_nightlight_power(self, code, method, switch, previous_state):
+        """Send the captured request and leave power state to the next poll."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WUS")
+        device.device_type = "LAP-B851S-WEU"
+        device.state.nightlight_status = previous_state
+        device.state.nightlight_brightness = 18
+        device.state.nightlight_color_temp = 2000
+        self.mock_api.return_value = ({"code": 0, "result": {"code": code}}, 200)
+
+        assert self.run_in_loop(getattr(device, method)) is (code == 0)
+        payload = parse_args(self.mock_api)["json_object"]["payload"]
+        assert payload["method"] == "setLightStatus"
+        assert payload["data"] == {
+            "nightLightSwitch": switch,
+            "brightness": 18,
+            "colorTemperature": 2000,
+            "colorMode": "white",
+        }
+        assert device.state.nightlight_status == previous_state
+
     def test_sprout_weu_auto_preference_requires_room_size(self):
         """Avoid sending an arbitrary room size when it has yet to be reported."""
         device = self.get_device("air_purifiers", "LAP-B851S-WUS")
