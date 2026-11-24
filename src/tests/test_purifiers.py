@@ -203,6 +203,41 @@ class TestAirPurifiers(TestBase):
             assert device.state.nightlight_brightness == expected_light["brightness"]
             assert device.state.nightlight_color_temp == expected_light["colorTemperature"]
 
+    @pytest.mark.parametrize(
+        ("response", "accepted"),
+        [
+            ({"code": 0, "result": {"code": 0}}, True),
+            ({"code": 0, "result": {"code": -1}}, False),
+            ({"code": 0, "result": {"code": "-1"}}, False),
+            ({"code": 0}, False),
+            ({"code": 0, "result": {"code": "invalid"}}, False),
+            ({"code": "invalid", "result": {"code": 0}}, False),
+        ],
+    )
+    def test_sprout_weu_auto_preference(self, response, accepted):
+        """Update the cached preference only after a confirmed command."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WUS")
+        device.device_type = "LAP-B851S-WEU"
+        device.state.auto_preference_type = "default"
+        device.state.auto_room_size = 152
+        self.mock_api.return_value = (response, 200)
+
+        assert self.run_in_loop(device.set_auto_preference, "quiet") is accepted
+        payload = parse_args(self.mock_api)["json_object"]["payload"]
+        assert payload["method"] == "setAutoPreference"
+        assert payload["data"] == {"autoPreferenceType": "quiet", "roomSize": 152}
+        assert device.state.auto_preference_type == ("quiet" if accepted else "default")
+        assert device.state.auto_room_size == 152
+
+    def test_sprout_weu_auto_preference_requires_room_size(self):
+        """Avoid sending an arbitrary room size when it has yet to be reported."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WUS")
+        device.device_type = "LAP-B851S-WEU"
+        self.mock_api.reset_mock()
+
+        assert self.run_in_loop(device.set_auto_preference, "quiet") is False
+        self.mock_api.assert_not_called()
+
     def test_methods(self, setup_entry, method):
         """Test device methods API request and response.
 

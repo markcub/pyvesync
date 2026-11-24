@@ -38,6 +38,7 @@ from pyvesync.utils.device_mixins import (
     BypassV2Mixin,
     process_bypassv2_result,
 )
+from pyvesync.utils.errors import ErrorTypes, ResponseInfo
 from pyvesync.utils.helpers import Helpers, Timer
 
 if TYPE_CHECKING:
@@ -812,6 +813,62 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
             )
             self.state.nightlight_brightness = details.nightlight.brightness
             self.state.nightlight_color_temp = details.nightlight.colorTemperature
+
+    async def set_auto_preference(
+        self,
+        preference: str = PurifierAutoPreference.DEFAULT,
+        room_size: int | None = None,
+    ) -> bool:
+        """Set Sprout Auto preference, retaining the reported room size by default."""
+        if self.device_type != 'LAP-B851S-WEU':
+            if room_size is None:
+                return await super().set_auto_preference(preference)
+            return await super().set_auto_preference(preference, room_size)
+
+        if room_size is None:
+            room_size = self.state.auto_room_size
+        if preference not in self.auto_preferences or room_size is None:
+            self.last_response = ResponseInfo(
+                'INVALID_AUTO_PREFERENCE',
+                ErrorTypes.BAD_RESPONSE,
+                'Unsupported Auto preference or unknown room size',
+            )
+            return False
+
+        method = 'setAutoPreference'
+        response = await self.call_bypassv2_api(
+            method, {'autoPreferenceType': preference, 'roomSize': room_size}
+        )
+        if not self._sprout_command_accepted(method, response):
+            return False
+
+        self.state.auto_preference_type = preference
+        self.state.auto_room_size = room_size
+        return True
+
+    def _sprout_command_accepted(self, method: str, response: dict | None) -> bool:
+        """Check the cloud and device acknowledgements for a Sprout command."""
+        try:
+            validated = Helpers.process_dev_response(_LOGGER, method, self, response)
+        except (AttributeError, TypeError, ValueError):
+            validated = {}
+        if validated is None:
+            return False
+        result = validated.get('result')
+        if (
+            str(validated.get('code')) != '0'
+            or not isinstance(result, dict)
+            or str(result.get('code')) != '0'
+        ):
+            self.last_response = ResponseInfo(
+                'INVALID_SPROUT_COMMAND_RESPONSE',
+                ErrorTypes.BAD_RESPONSE,
+                f'VeSync did not acknowledge {method}',
+                response_data=response,
+            )
+            return False
+
+        return True
 
     async def get_details(self) -> None:
         """Build API V2 Purifier details dictionary."""
