@@ -616,6 +616,8 @@ class HumidifierFeatures(Features):
 
 
 SPROUT_NIGHTLIGHT_MAX_BRIGHTNESS = 100
+# Allow two one-minute Home Assistant polls and some scheduling slack.
+SPROUT_STATUS_CONFIRMATION_TIMEOUT = 150
 
 
 class PurifierFeatures(Features):

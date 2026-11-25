@@ -277,7 +277,7 @@ class TestAirPurifiers(TestBase):
         ],
     )
     def test_sprout_weu_nightlight_power(self, code, method, switch, previous_state):
-        """Send the captured request and leave power state to the next poll."""
+        """Update cached power only after the captured request succeeds."""
         device = self.get_device("air_purifiers", "LAP-B851S-WUS")
         device.device_type = "LAP-B851S-WEU"
         device.state.nightlight_status = previous_state
@@ -294,7 +294,9 @@ class TestAirPurifiers(TestBase):
             "colorTemperature": 2000,
             "colorMode": "white",
         }
-        assert device.state.nightlight_status == previous_state
+        assert device.state.nightlight_status == (
+            const.DeviceStatus.from_int(switch) if code == 0 else previous_state
+        )
 
     @pytest.mark.parametrize(
         ("settings", "brightness", "color_temp"),
@@ -305,7 +307,7 @@ class TestAirPurifiers(TestBase):
         ],
     )
     def test_sprout_weu_nightlight_settings(self, settings, brightness, color_temp):
-        """Send new settings while retaining omitted values and polled state."""
+        """Send and cache new settings while retaining omitted values."""
         device = self.get_device("air_purifiers", "LAP-B851S-WUS")
         device.device_type = "LAP-B851S-WEU"
         device.state.nightlight_brightness = 18
@@ -321,8 +323,8 @@ class TestAirPurifiers(TestBase):
             "colorTemperature": color_temp,
             "colorMode": "white",
         }
-        assert device.state.nightlight_brightness == 18
-        assert device.state.nightlight_color_temp == 2000
+        assert device.state.nightlight_brightness == brightness
+        assert device.state.nightlight_color_temp == color_temp
 
     @pytest.mark.parametrize("settings", [{}, {"brightness": 101, "color_temp_kelvin": 2000}])
     def test_sprout_weu_invalid_nightlight_settings(self, settings):
@@ -333,10 +335,88 @@ class TestAirPurifiers(TestBase):
             device.set_nightlight_mode, "on", brightness=18, color_temp_kelvin=2000
         )
         self.mock_api.reset_mock()
+        device.state.nightlight_brightness = None
 
         assert self.run_in_loop(device.set_nightlight_mode, "on", **settings) is False
         self.mock_api.assert_not_called()
         assert device.last_response.name == "INVALID_NIGHTLIGHT_SETTINGS"
+
+    def test_sprout_weu_delayed_control_status(self, monkeypatch):
+        """Keep acknowledged fields through stale polls and expire unconfirmed fields."""
+        model = "LAP-B851S-WEU"
+        device = self.get_device("air_purifiers", model)
+        details = {
+            **call_json_purifiers.PURIFIER_DETAILS["LAP-B851S-WUS"],
+            "workMode": "auto",
+            "powerSwitch": 1,
+            "manualSpeedLevel": 3,
+            "fanSpeedLevel": 2,
+            "autoPreference": {"autoPreferenceType": "default", "roomSize": 152},
+            "nightLight": {
+                "nightLightSwitch": 0,
+                "brightness": 18,
+                "colorTemperature": 2000,
+            },
+        }
+        now = 100
+        monkeypatch.setattr(
+            "pyvesync.devices.vesyncpurifier.monotonic", lambda: now
+        )
+
+        def poll(**changes):
+            self.mock_api.return_value = (
+                call_json_purifiers.build_bypass_v2_response(
+                    inner_result={**details, **changes}
+                ),
+                200,
+            )
+            self.run_in_loop(device.get_details)
+
+        def acknowledge(method, *args, **kwargs):
+            self.mock_api.return_value = ({"code": 0, "result": {"code": 0}}, 200)
+            assert self.run_in_loop(method, *args, **kwargs)
+
+        poll()
+        acknowledge(device.set_fan_speed, 4)
+        acknowledge(device.set_auto_preference, "quiet")
+        acknowledge(device.set_nightlight_mode, "on", brightness=30, color_temp_kelvin=2700)
+        now += 60
+        poll(humidity=49)
+        assert device.state.humidity == 49
+        assert device.state.mode == "manual"
+        assert device.state.fan_set_level == device.state.fan_level == 4
+        assert device.state.auto_preference_type == "quiet"
+        assert device.state.nightlight_status == const.DeviceStatus.ON
+        assert device.state.nightlight_brightness == 30
+        assert device.state.nightlight_color_temp == 2700
+
+        # An actual match releases that field for subsequent external changes.
+        poll(autoPreference={"autoPreferenceType": "quiet", "roomSize": 152})
+        poll()
+        assert device.state.auto_preference_type == "default"
+
+        # A newer command replaces the earlier speed and Auto releases running speed.
+        acknowledge(device.set_fan_speed, 3)
+        acknowledge(device.set_auto_mode)
+        poll(manualSpeedLevel=4, fanSpeedLevel=1)
+        assert device.state.mode == "auto"
+        assert device.state.fan_set_level == 3
+        assert device.state.fan_level == 1
+
+        # Rejected power commands must leave the acknowledged state alone.
+        self.mock_api.return_value = ({"code": 0, "result": {"code": "-1"}}, 200)
+        assert not self.run_in_loop(device.turn_off)
+        assert device.state.device_status == const.DeviceStatus.ON
+        acknowledge(device.turn_off)
+        poll()
+        assert device.state.device_status == const.DeviceStatus.OFF
+
+        now += const.SPROUT_STATUS_CONFIRMATION_TIMEOUT
+        poll(nightLight=None)
+        assert device.state.device_status == const.DeviceStatus.ON
+        assert device.state.nightlight_status == const.DeviceStatus.OFF
+        assert device.state.nightlight_brightness == 18
+        assert device.state.nightlight_color_temp == 2000
 
     def test_sprout_weu_auto_preference_requires_room_size(self):
         """Avoid sending an arbitrary room size when it has yet to be reported."""
