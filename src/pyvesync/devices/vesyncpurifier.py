@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from typing_extensions import deprecated
@@ -10,6 +11,7 @@ from typing_extensions import deprecated
 from pyvesync.base_devices.purifier_base import VeSyncPurifier
 from pyvesync.const import (
     SPROUT_NIGHTLIGHT_MAX_BRIGHTNESS,
+    SPROUT_STATUS_CONFIRMATION_TIMEOUT,
     ConnectionStatus,
     DeviceStatus,
     NightlightModes,
@@ -546,6 +548,13 @@ class VeSyncAirBaseV2(VeSyncAirBypass):
         self.state.connection_status = ConnectionStatus.ONLINE
         return True
 
+    def _control_command_accepted(self, method: str, response: dict | None) -> bool:
+        return Helpers.process_dev_response(_LOGGER, method, self, response) is not None
+
+    def _apply_command_state(self, **changes: str | int | None) -> None:
+        for field, value in changes.items():
+            setattr(self.state, field, value)
+
     async def toggle_switch(self, toggle: bool | None = None) -> bool:
         if toggle is None:
             toggle = not bool(self.state.device_status)
@@ -555,11 +564,10 @@ class VeSyncAirBaseV2(VeSyncAirBypass):
 
         payload_data = {'powerSwitch': int(toggle), 'switchIdx': 0}
         r_dict = await self.call_bypassv2_api('setSwitch', payload_data)
-        r = Helpers.process_dev_response(_LOGGER, 'toggle_switch', self, r_dict)
-        if r is None:
+        if not self._control_command_accepted('toggle_switch', r_dict):
             return False
 
-        self.state.device_status = DeviceStatus.from_bool(toggle)
+        self._apply_command_state(device_status=DeviceStatus.from_bool(toggle))
         self.state.connection_status = ConnectionStatus.ONLINE
         return True
 
@@ -693,14 +701,15 @@ class VeSyncAirBaseV2(VeSyncAirBypass):
 
         payload_data = {'levelIdx': 0, 'manualSpeedLevel': new_speed, 'levelType': 'wind'}
         r_dict = await self.call_bypassv2_api('setLevel', payload_data)
-        r = Helpers.process_dev_response(_LOGGER, 'set_fan_speed', self, r_dict)
-        if r is None:
+        if not self._control_command_accepted('set_fan_speed', r_dict):
             return False
 
-        self.state.fan_set_level = new_speed
-        self.state.fan_level = new_speed
-        self.state.mode = PurifierModes.MANUAL
-        self.state.device_status = DeviceStatus.ON
+        self._apply_command_state(
+            fan_set_level=new_speed,
+            fan_level=new_speed,
+            mode=PurifierModes.MANUAL,
+            device_status=DeviceStatus.ON,
+        )
         self.state.connection_status = ConnectionStatus.ONLINE
         return True
 
@@ -717,13 +726,11 @@ class VeSyncAirBaseV2(VeSyncAirBypass):
 
         payload_data = {'workMode': mode}
         r_dict = await self.call_bypassv2_api('setPurifierMode', payload_data)
-        r = Helpers.process_dev_response(_LOGGER, 'mode_toggle', self, r_dict)
-        if r is None:
+        if not self._control_command_accepted('mode_toggle', r_dict):
             return False
 
-        self.state.mode = mode
+        self._apply_command_state(mode=mode, device_status=DeviceStatus.ON)
         self.state.connection_status = ConnectionStatus.ONLINE
-        self.state.device_status = DeviceStatus.ON
         return True
 
 
@@ -773,6 +780,38 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
     ) -> None:
         """Initialize air purifier class."""
         super().__init__(details, manager, feature_map)
+        self._pending_status: dict[str, tuple[str | int | None, float]] = {}
+        self._reported_status: dict[str, str | int | None] = {}
+
+    def _control_command_accepted(self, method: str, response: dict | None) -> bool:
+        if self.supports_tunable_nightlight:
+            return self._sprout_command_accepted(method, response)
+        return super()._control_command_accepted(method, response)
+
+    def _apply_command_state(self, **changes: str | int | None) -> None:
+        if self.supports_tunable_nightlight:
+            # Polling controls the running speed in Auto and when powered off.
+            if (
+                changes.get('mode') == PurifierModes.AUTO
+                or changes.get('device_status') == DeviceStatus.OFF
+            ) and self._pending_status.pop('fan_level', None) is not None:
+                super()._apply_command_state(fan_level=self._reported_status['fan_level'])
+            deadline = monotonic() + SPROUT_STATUS_CONFIRMATION_TIMEOUT
+            for field, value in changes.items():
+                self._reported_status.setdefault(field, getattr(self.state, field))
+                self._pending_status[field] = (value, deadline)
+        super()._apply_command_state(**changes)
+
+    def _apply_reported_status(self, **reported: str | int | None) -> None:
+        self._reported_status.update(reported)
+        now = monotonic()
+        for field, (expected, deadline) in list(self._pending_status.items()):
+            if (field in reported and reported[field] == expected) or now >= deadline:
+                del self._pending_status[field]
+                reported[field] = self._reported_status[field]
+            else:
+                reported[field] = expected
+        super()._apply_command_state(**reported)
 
     def _set_state(self, details: InnerPurifierBaseResult) -> None:
         """Set Purifier state from details response."""
@@ -780,13 +819,12 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
             _LOGGER.warning('Invalid details model passed to _set_state')
             return
         self.state.connection_status = ConnectionStatus.ONLINE
-        self.state.device_status = DeviceStatus.from_int(details.powerSwitch)
-        self.state.mode = details.workMode
-        if details.fanSpeedLevel == 255:  # noqa: PLR2004
-            self.state.fan_level = 0
-        else:
-            self.state.fan_level = details.fanSpeedLevel
-        self.state.fan_set_level = details.manualSpeedLevel
+        reported: dict[str, str | int | None] = {
+            'device_status': DeviceStatus.from_int(details.powerSwitch),
+            'mode': details.workMode,
+            'fan_level': 0 if details.fanSpeedLevel == 255 else details.fanSpeedLevel,  # noqa: PLR2004
+            'fan_set_level': details.manualSpeedLevel,
+        }
         self.state.child_lock = bool(details.childLockSwitch)
         self.state.air_quality_level = details.AQLevel
         self.state.pm25 = details.PM25
@@ -797,8 +835,10 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
         self.state.display_status = DeviceStatus.from_int(details.screenState)
         auto_pref = details.autoPreference
         if auto_pref is not None:
-            self.state.auto_preference_type = auto_pref.autoPreferenceType
-            self.state.auto_room_size = auto_pref.roomSize
+            reported.update(
+                auto_preference_type=auto_pref.autoPreferenceType,
+                auto_room_size=auto_pref.roomSize,
+            )
         self.state.humidity = details.humidity
         self.state.temperature = (
             details.temperature / 10 if details.temperature is not None else None
@@ -811,11 +851,14 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
         if details.filterLifePercent is not None:
             self.state.filter_life = details.filterLifePercent
         if details.nightlight is not None:
-            self.state.nightlight_status = DeviceStatus.from_int(
-                details.nightlight.nightLightSwitch
+            reported.update(
+                nightlight_status=DeviceStatus.from_int(
+                    details.nightlight.nightLightSwitch
+                ),
+                nightlight_brightness=details.nightlight.brightness,
+                nightlight_color_temp=details.nightlight.colorTemperature,
             )
-            self.state.nightlight_brightness = details.nightlight.brightness
-            self.state.nightlight_color_temp = details.nightlight.colorTemperature
+        self._apply_reported_status(**reported)
 
     async def set_auto_preference(
         self,
@@ -845,8 +888,9 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
         if not self._sprout_command_accepted(method, response):
             return False
 
-        self.state.auto_preference_type = preference
-        self.state.auto_room_size = room_size
+        self._apply_command_state(
+            auto_preference_type=preference, auto_room_size=room_size
+        )
         return True
 
     def _sprout_command_accepted(self, method: str, response: dict | None) -> bool:
@@ -887,8 +931,8 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
     ) -> bool:
         """Set WEU nightlight power and optional brightness (%) and colour (K).
 
-        Omitted settings retain their last reported values. The return value
-        acknowledges the command; the status poll confirms the device state.
+        Omitted settings retain their current values. A successful command
+        updates the cached state while awaiting confirmation from a status poll.
         """
         mode = mode.lower()
         if not self.supports_tunable_nightlight or mode not in (
@@ -931,7 +975,14 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
                 'colorMode': 'white',
             },
         )
-        return self._sprout_command_accepted(method, response)
+        if not self._sprout_command_accepted(method, response):
+            return False
+        self._apply_command_state(
+            nightlight_status=DeviceStatus.from_bool(mode == NightlightModes.ON),
+            nightlight_brightness=brightness,
+            nightlight_color_temp=color_temp_kelvin,
+        )
+        return True
 
     async def get_details(self) -> None:
         """Build API V2 Purifier details dictionary."""
@@ -940,6 +991,7 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
             self, _LOGGER, 'get_details', r_dict, PurifierSproutResult
         )
         if r_model is None:
+            self._apply_reported_status()
             return
 
         self._set_state(r_model)
