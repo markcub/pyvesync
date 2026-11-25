@@ -92,7 +92,6 @@ class TestAirPurifiers(TestBase):
     base_methods = [
         ["turn_on"],
         ["turn_off"],
-        ["set_sleep_mode"],
         ["set_manual_mode"],
         ["set_fan_speed", {"speed": 3}],
     ]
@@ -156,6 +155,197 @@ class TestAirPurifiers(TestBase):
         assert assert_test(
             method_call, all_kwargs, setup_entry, self.write_api, self.overwrite
         )
+
+    def test_sprout_weu_fourth_speed(self):
+        """Send the verified fourth manual speed only on the WEU model."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WEU")
+        assert device.fan_levels == [1, 2, 3, 4]
+        self.mock_api.return_value = ({"code": 0, "result": {"code": 0}}, 200)
+        assert self.run_in_loop(device.set_fan_speed, 4)
+
+        payload = parse_args(self.mock_api)["json_object"]["payload"]
+        assert payload["method"] == "setLevel"
+        assert payload["data"] == {
+            "levelIdx": 0,
+            "manualSpeedLevel": 4,
+            "levelType": "wind",
+        }
+
+        other = self.get_device("air_purifiers", "LAP-B851S-WUS")
+        self.mock_api.reset_mock()
+        assert self.run_in_loop(other.set_fan_speed, 4) is False
+        self.mock_api.assert_not_called()
+
+    def test_sprout_weu_fan_modes(self):
+        """Expose the two fan modes offered by the VeSync app on WEU."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WEU")
+        assert set(device.modes) == {const.PurifierModes.MANUAL, const.PurifierModes.AUTO}
+        self.mock_api.reset_mock()
+        assert self.run_in_loop(device.set_sleep_mode) is False
+        self.mock_api.assert_not_called()
+
+    def test_sprout_temperature_refresh(self):
+        """Preserve tenths of a degree and keep a null reading unknown."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WEU")
+        details = call_json_purifiers.PURIFIER_DETAILS["LAP-B851S-WUS"]
+        for raw, expected in ((609, 60.9), (0, 0.0), (None, None)):
+            response = call_json_purifiers.build_bypass_v2_response(
+                inner_result={**details, "temperature": raw}
+            )
+            self.mock_api.return_value = (response, 200)
+            self.run_in_loop(device.update)
+            assert device.state.temperature == expected
+
+    def test_sprout_filter_life_refresh(self):
+        """Read the filter percentage and preserve it across incomplete polls."""
+        setup_entry = "LAP-B851S-WUS"
+        device = self.get_device("air_purifiers", setup_entry)
+        device.device_type = "LAP-B851S-WEU"
+        details = call_json_purifiers.PURIFIER_DETAILS[setup_entry]
+        assert device.state.filter_life is None
+
+        for fields, expected in (
+            ({"filterLifePercent": 76}, 76),
+            ({}, 76),
+            ({"filterLifePercent": 0}, 0),
+        ):
+            response = call_json_purifiers.build_bypass_v2_response(
+                inner_result={**details, **fields}
+            )
+            self.mock_api.return_value = (response, 200)
+            self.run_in_loop(device.update)
+            assert device.state.filter_life == expected
+
+    def test_sprout_nightlight_refresh(self):
+        """Refresh power, brightness and colour temperature from each poll."""
+        setup_entry = "LAP-B851S-WUS"
+        device = self.get_device("air_purifiers", setup_entry)
+        details = call_json_purifiers.PURIFIER_DETAILS[setup_entry]
+        initial_light = details["nightLight"]
+        updated_light = {"nightLightSwitch": 0, "brightness": 20, "colorTemperature": 2700}
+        for light, expected_light in (
+            (initial_light, initial_light),
+            (updated_light, updated_light),
+            (None, updated_light),
+        ):
+            poll_details = {key: value for key, value in details.items() if key != "nightLight"}
+            if light is not None:
+                poll_details["nightLight"] = light
+            response = call_json_purifiers.build_bypass_v2_response(
+                inner_result=poll_details
+            )
+            self.mock_api.return_value = (response, 200)
+            self.run_in_loop(device.update)
+            assert device.state.nightlight_status == const.DeviceStatus.from_int(
+                expected_light["nightLightSwitch"]
+            )
+            assert device.state.nightlight_brightness == expected_light["brightness"]
+            assert device.state.nightlight_color_temp == expected_light["colorTemperature"]
+
+    @pytest.mark.parametrize(
+        ("response", "accepted"),
+        [
+            ({"code": 0, "result": {"code": 0}}, True),
+            ({"code": 0, "result": {"code": -1}}, False),
+            ({"code": 0, "result": {"code": "-1"}}, False),
+            ({"code": 0}, False),
+            ({"code": 0, "result": {"code": "invalid"}}, False),
+            ({"code": "invalid", "result": {"code": 0}}, False),
+        ],
+    )
+    def test_sprout_weu_auto_preference(self, response, accepted):
+        """Update the cached preference only after a confirmed command."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WUS")
+        device.device_type = "LAP-B851S-WEU"
+        device.state.auto_preference_type = "default"
+        device.state.auto_room_size = 152
+        self.mock_api.return_value = (response, 200)
+
+        assert self.run_in_loop(device.set_auto_preference, "quiet") is accepted
+        payload = parse_args(self.mock_api)["json_object"]["payload"]
+        assert payload["method"] == "setAutoPreference"
+        assert payload["data"] == {"autoPreferenceType": "quiet", "roomSize": 152}
+        assert device.state.auto_preference_type == ("quiet" if accepted else "default")
+        assert device.state.auto_room_size == 152
+
+    @pytest.mark.parametrize("code", [0, "-1"])
+    @pytest.mark.parametrize(
+        ("method", "switch", "previous_state"),
+        [
+            ("turn_on_nightlight", 1, const.DeviceStatus.OFF),
+            ("turn_off_nightlight", 0, const.DeviceStatus.ON),
+        ],
+    )
+    def test_sprout_weu_nightlight_power(self, code, method, switch, previous_state):
+        """Send the captured request and leave power state to the next poll."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WUS")
+        device.device_type = "LAP-B851S-WEU"
+        device.state.nightlight_status = previous_state
+        device.state.nightlight_brightness = 18
+        device.state.nightlight_color_temp = 2000
+        self.mock_api.return_value = ({"code": 0, "result": {"code": code}}, 200)
+
+        assert self.run_in_loop(getattr(device, method)) is (code == 0)
+        payload = parse_args(self.mock_api)["json_object"]["payload"]
+        assert payload["method"] == "setLightStatus"
+        assert payload["data"] == {
+            "nightLightSwitch": switch,
+            "brightness": 18,
+            "colorTemperature": 2000,
+            "colorMode": "white",
+        }
+        assert device.state.nightlight_status == previous_state
+
+    @pytest.mark.parametrize(
+        ("settings", "brightness", "color_temp"),
+        [
+            ({"brightness": 30, "color_temp_kelvin": 2700}, 30, 2700),
+            ({"brightness": 30}, 30, 2000),
+            ({"color_temp_kelvin": 2700}, 18, 2700),
+        ],
+    )
+    def test_sprout_weu_nightlight_settings(self, settings, brightness, color_temp):
+        """Send new settings while retaining omitted values and polled state."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WUS")
+        device.device_type = "LAP-B851S-WEU"
+        device.state.nightlight_brightness = 18
+        device.state.nightlight_color_temp = 2000
+        self.mock_api.return_value = ({"code": 0, "result": {"code": 0}}, 200)
+
+        assert self.run_in_loop(device.set_nightlight_mode, "on", **settings)
+        payload = parse_args(self.mock_api)["json_object"]["payload"]
+        assert payload["method"] == "setLightStatus"
+        assert payload["data"] == {
+            "nightLightSwitch": 1,
+            "brightness": brightness,
+            "colorTemperature": color_temp,
+            "colorMode": "white",
+        }
+        assert device.state.nightlight_brightness == 18
+        assert device.state.nightlight_color_temp == 2000
+
+    @pytest.mark.parametrize("settings", [{}, {"brightness": 101, "color_temp_kelvin": 2000}])
+    def test_sprout_weu_invalid_nightlight_settings(self, settings):
+        """Report local validation failure without sending a device command."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WEU")
+        self.mock_api.return_value = ({"code": 0, "result": {"code": 0}}, 200)
+        assert self.run_in_loop(
+            device.set_nightlight_mode, "on", brightness=18, color_temp_kelvin=2000
+        )
+        self.mock_api.reset_mock()
+
+        assert self.run_in_loop(device.set_nightlight_mode, "on", **settings) is False
+        self.mock_api.assert_not_called()
+        assert device.last_response.name == "INVALID_NIGHTLIGHT_SETTINGS"
+
+    def test_sprout_weu_auto_preference_requires_room_size(self):
+        """Avoid sending an arbitrary room size when it has yet to be reported."""
+        device = self.get_device("air_purifiers", "LAP-B851S-WUS")
+        device.device_type = "LAP-B851S-WEU"
+        self.mock_api.reset_mock()
+
+        assert self.run_in_loop(device.set_auto_preference, "quiet") is False
+        self.mock_api.assert_not_called()
 
     def test_methods(self, setup_entry, method):
         """Test device methods API request and response.

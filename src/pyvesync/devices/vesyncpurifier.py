@@ -9,6 +9,7 @@ from typing_extensions import deprecated
 
 from pyvesync.base_devices.purifier_base import VeSyncPurifier
 from pyvesync.const import (
+    SPROUT_NIGHTLIGHT_MAX_BRIGHTNESS,
     ConnectionStatus,
     DeviceStatus,
     NightlightModes,
@@ -38,6 +39,7 @@ from pyvesync.utils.device_mixins import (
     BypassV2Mixin,
     process_bypassv2_result,
 )
+from pyvesync.utils.errors import ErrorTypes, ResponseInfo
 from pyvesync.utils.helpers import Helpers, Timer
 
 if TYPE_CHECKING:
@@ -798,17 +800,138 @@ class VeSyncAirSprout(VeSyncAirBaseV2):  # pylint: disable=too-many-ancestors
             self.state.auto_preference_type = auto_pref.autoPreferenceType
             self.state.auto_room_size = auto_pref.roomSize
         self.state.humidity = details.humidity
-        self.state.temperature = int((details.temperature or 0) / 10)
+        self.state.temperature = (
+            details.temperature / 10 if details.temperature is not None else None
+        )
         self.state.pm1 = details.PM1
         self.state.pm10 = details.PM10
         self.state.pm25 = details.PM25
         self.state.voc = details.VOC
         self.state.co2 = details.CO2
+        if details.filterLifePercent is not None:
+            self.state.filter_life = details.filterLifePercent
         if details.nightlight is not None:
             self.state.nightlight_status = DeviceStatus.from_int(
                 details.nightlight.nightLightSwitch
             )
             self.state.nightlight_brightness = details.nightlight.brightness
+            self.state.nightlight_color_temp = details.nightlight.colorTemperature
+
+    async def set_auto_preference(
+        self,
+        preference: str = PurifierAutoPreference.DEFAULT,
+        room_size: int | None = None,
+    ) -> bool:
+        """Set Sprout Auto preference, retaining the reported room size by default."""
+        if self.device_type != 'LAP-B851S-WEU':
+            if room_size is None:
+                return await super().set_auto_preference(preference)
+            return await super().set_auto_preference(preference, room_size)
+
+        if room_size is None:
+            room_size = self.state.auto_room_size
+        if preference not in self.auto_preferences or room_size is None:
+            self.last_response = ResponseInfo(
+                'INVALID_AUTO_PREFERENCE',
+                ErrorTypes.BAD_RESPONSE,
+                'Unsupported Auto preference or unknown room size',
+            )
+            return False
+
+        method = 'setAutoPreference'
+        response = await self.call_bypassv2_api(
+            method, {'autoPreferenceType': preference, 'roomSize': room_size}
+        )
+        if not self._sprout_command_accepted(method, response):
+            return False
+
+        self.state.auto_preference_type = preference
+        self.state.auto_room_size = room_size
+        return True
+
+    def _sprout_command_accepted(self, method: str, response: dict | None) -> bool:
+        """Check the cloud and device acknowledgements for a Sprout command."""
+        try:
+            validated = Helpers.process_dev_response(_LOGGER, method, self, response)
+        except (AttributeError, TypeError, ValueError):
+            validated = {}
+        if validated is None:
+            return False
+        result = validated.get('result')
+        if (
+            str(validated.get('code')) != '0'
+            or not isinstance(result, dict)
+            or str(result.get('code')) != '0'
+        ):
+            self.last_response = ResponseInfo(
+                'INVALID_SPROUT_COMMAND_RESPONSE',
+                ErrorTypes.BAD_RESPONSE,
+                f'VeSync did not acknowledge {method}',
+                response_data=response,
+            )
+            return False
+
+        return True
+
+    @property
+    def supports_tunable_nightlight(self) -> bool:
+        """Return whether the model supports power, brightness and Kelvin control."""
+        return self.device_type == 'LAP-B851S-WEU'
+
+    async def set_nightlight_mode(
+        self,
+        mode: str,
+        *,
+        brightness: int | None = None,
+        color_temp_kelvin: int | None = None,
+    ) -> bool:
+        """Set WEU nightlight power and optional brightness (%) and colour (K).
+
+        Omitted settings retain their last reported values. The return value
+        acknowledges the command; the status poll confirms the device state.
+        """
+        mode = mode.lower()
+        if not self.supports_tunable_nightlight or mode not in (
+            NightlightModes.ON,
+            NightlightModes.OFF,
+        ):
+            if brightness is not None or color_temp_kelvin is not None:
+                self.last_response = ResponseInfo(
+                    'UNSUPPORTED_NIGHTLIGHT_SETTINGS',
+                    ErrorTypes.BAD_RESPONSE,
+                    'This nightlight mode or model does not support tunable settings',
+                )
+                return False
+            return await super().set_nightlight_mode(mode)
+
+        if brightness is None:
+            brightness = self.state.nightlight_brightness
+        if color_temp_kelvin is None:
+            color_temp_kelvin = self.state.nightlight_color_temp
+        if (
+            brightness is None
+            or color_temp_kelvin is None
+            or not 0 <= brightness <= SPROUT_NIGHTLIGHT_MAX_BRIGHTNESS
+            or color_temp_kelvin <= 0
+        ):
+            self.last_response = ResponseInfo(
+                'INVALID_NIGHTLIGHT_SETTINGS',
+                ErrorTypes.BAD_RESPONSE,
+                'Nightlight brightness or colour temperature is missing or invalid',
+            )
+            return False
+
+        method = 'setLightStatus'
+        response = await self.call_bypassv2_api(
+            method,
+            {
+                'nightLightSwitch': int(mode == NightlightModes.ON),
+                'brightness': brightness,
+                'colorTemperature': color_temp_kelvin,
+                'colorMode': 'white',
+            },
+        )
+        return self._sprout_command_accepted(method, response)
 
     async def get_details(self) -> None:
         """Build API V2 Purifier details dictionary."""

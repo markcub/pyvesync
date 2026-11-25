@@ -318,6 +318,7 @@ DETAILS_RESPONSES = {
     "LAP-V201S": build_bypass_v2_response(inner_result=PURIFIER_DETAILS["LAP-V201S"]),
     "EL551S": build_bypass_v2_response(inner_result=PURIFIER_DETAILS["EL551S"]),
     "LAP-B851S-WUS": build_bypass_v2_response(inner_result=PURIFIER_DETAILS["LAP-B851S-WUS"]),
+    "LAP-B851S-WEU": build_bypass_v2_response(inner_result=PURIFIER_DETAILS["LAP-B851S-WUS"]),
 }
 
 FunctionResponses.default_factory = lambda: (
@@ -341,6 +342,7 @@ METHOD_RESPONSES = {
     "LAP-V201S": deepcopy(FunctionResponsesV2),
     "EL551S": deepcopy(FunctionResponsesV2),
     "LAP-B851S-WUS": deepcopy(FunctionResponsesV2),
+    "LAP-B851S-WEU": deepcopy(FunctionResponsesV2),
 }
 
 # Add responses for methods with different responses than the default
